@@ -1,0 +1,5 @@
+<?xml version="1.0" ?>
+<launch>
+  <node name="framgrabber_node" pkg="usdev_framegrab" type="usdev_streaming.py" output="screen" required="true" />
+  <node name="rqt_dyn_recfg_node" pkg="rqt_reconfigure" type="rqt_reconfigure" args="" required="true" output="screen"/>   
+</launch>

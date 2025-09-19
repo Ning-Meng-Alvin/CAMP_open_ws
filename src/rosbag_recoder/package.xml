@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>rosbag_recoder</name>
+  <version>0.0.1</version>
+  <description>Python wrapper node for rosbag record with SpaceMouse long-press control.</description>
+
+  <maintainer email="you@example.com">your_name</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <!-- runtime deps (Python node) -->
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>rosbag</exec_depend>
+  <exec_depend>rostopic</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>   <!-- Joy -->
+  <exec_depend>std_srvs</exec_depend>      <!-- start/stop/reload services -->
+  <!-- PyYAML via rosdep -->
+  <exec_depend>python3-yaml</exec_depend>
+
+  <export/>
+</package>

@@ -1,0 +1,20 @@
+<?xml version="1.0" ?>
+<launch>
+  <!-- parameters -->
+  <arg name="cmd_log_path" default="$(find netft_calib)/config/joint_cmds.txt" />
+
+  <arg name="robot_ip" default="172.16.0.2" />
+  <arg name="load_gripper" default="false" />
+  <arg name="rs_align_depth"  default="true" />
+  <arg name="rs_filters" default="pointcloud" />
+
+  <!-- init states publisher -->
+  <include file="$(find franka_control)/launch/franka_control.launch" >
+    <arg name="robot_ip" value="$(arg robot_ip)" />
+    <arg name="load_gripper" value="$(arg load_gripper)" />
+  </include> 
+
+  <!-- log joint configuration -->
+  <node pkg="netft_calib" type="gui_netft_calib_log.py" 
+        name="gui_netft_calib_log"   output="screen"  args="$(arg cmd_log_path)"/>
+</launch>

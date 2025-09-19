@@ -1,0 +1,24 @@
+<?xml version="1.0" ?>
+<launch>
+    <!-- franka initialization -->
+    <include file="$(find franka_scanning)/launch/franka_init.launch" >
+        <arg name="robot_ip" value="172.16.0.2" />
+        <arg name="launch_rviz" value="true" />
+        <arg name="rviz_config_path" value="$(find franka_scanning)/rviz/rviz_scanning_config.rviz" />
+    </include>
+
+    <!-- initialize force/torque sensor -->
+    <node name = "ft_data_nodes" 
+        pkg = "netft_utils"  
+        type = "netft_node"
+        output = "screen" 
+        args = "172.31.1.177"/> 
+        <!-- args = "192.168.106.100"/> -->
+
+  <!-- load calibration result -->
+  <rosparam command="load" file="$(find netft_calib)/config/netft_calib_result.yaml"/>
+  
+  <!-- check calibration -->
+  <node name="netft_calib_node" pkg="netft_calib" type="pub_calib_result.py" output="screen"/>
+
+</launch>

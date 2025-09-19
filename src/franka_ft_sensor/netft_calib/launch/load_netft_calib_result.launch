@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<launch>
+
+  <!-- load calibration result -->
+  <rosparam command="load" file="$(find netft_calib)/config/netft_calib_result.yaml"/>
+  
+  <!-- broadcasting frame -->
+  <!-- <node name="broadcasting_camera_frame" pkg="franka_handeye_cali" type="broadcasting_camera_frame.py" output="screen"/> -->
+
+</launch>

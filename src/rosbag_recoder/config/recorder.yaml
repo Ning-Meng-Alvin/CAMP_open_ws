@@ -1,0 +1,20 @@
+out_dir: "/home/camp/ros_bags"
+bag_prefix: "rec"
+
+topics: ["/end_effector_pose", "/joint_states"]
+exclude: []
+use_regex: false
+record_all_if_empty: false
+
+compression: "lz4"         # lz4|bz2|none
+split_size_mb: 2048
+split_duration_s: 0
+max_splits: 0
+buffsize: 0
+stop_after_s: 0
+
+joy_topic: "/spacenav/joy"
+start_button_index: 0
+long_press_sec: 2.0
+toggle_mode: true
+auto_start: false

@@ -1,0 +1,15 @@
+color: false
+final_cbox:
+  x0: 582
+  x1: 1337
+  y0: 180
+  y1: 779
+frame_id: us_prob
+hflip: false
+init_cbox:
+  x0: 500
+  x1: 1420
+  y0: 180
+  y1: 900
+pub_topic: frame_grabber/us_img
+video_index: 4

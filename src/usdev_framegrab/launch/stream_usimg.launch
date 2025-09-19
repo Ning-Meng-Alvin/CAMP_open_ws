@@ -1,0 +1,4 @@
+<?xml version="1.0" ?>
+<launch>
+  <node name="framgrabber_node" pkg="usdev_framegrab" type="usdev_streaming.py" output="screen" required="true" />
+</launch>

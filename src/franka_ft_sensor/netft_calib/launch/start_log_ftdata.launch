@@ -1,0 +1,24 @@
+<?xml version="1.0" ?>
+<launch>
+    <!-- franka initialization -->
+    <include file="$(find netft_calib)/launch/netft_init.launch" >
+        <arg name="robot_ip" value="172.16.0.2" />
+        <arg name="rviz_config_path" value="$(find netft_calib)/rviz/netft_rviz_config.rviz" />
+    </include>
+
+    <!-- initialize force/torque sensor -->
+    <node name = "ft_data_nodes" 
+        pkg = "netft_utils"  
+        type = "netft_node"
+        output = "screen"
+        args = "172.31.1.177"/> 
+        <!-- args = "192.168.106.100"/> -->
+
+    <!-- start identification -->
+    <node name = "ft_identify_nodes" 
+        pkg = "netft_calib"  
+        type = "data_aquisition.py"
+        output = "screen" 
+        args = "ftcalib_jgroup $(find netft_calib)"/>
+
+</launch>

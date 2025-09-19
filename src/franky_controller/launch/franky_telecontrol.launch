@@ -1,0 +1,28 @@
+<?xml version="1.0" ?>
+<launch>
+    <!-- init spacemouse -->
+    <include file="$(find spacenav_node)/launch/classic.launch"/>
+
+    <!-- init velocity controller implemented based on franky -->
+    <node pkg="moveit_franky_bridge"
+            type="moveit_result_to_franky_goal.py"
+            name="moveit_franky_bridge_node"
+            output="log"/>
+
+    <!-- init rviz moveit -->
+    <include file="$(find franky_moveit_config)/launch/demo.launch"/>
+
+
+    <node pkg="rosbag_recoder" 
+        type="recorder_node.py"
+        name="rosbag_recoder" 
+        output="screen">
+        <rosparam command="load" file="$(find rosbag_recoder)/config/recorder.yaml"/>
+    </node>
+
+
+    <!-- load realsense cameras -->
+    <!-- <include file="$(find franka_policy)/launch/rs_multiple_devices.launch"/> -->
+
+</launch>
+

@@ -1,0 +1,8 @@
+<?xml version="1.0" ?>
+<launch>
+
+  <!-- run identification program -->
+  <node pkg="netft_calib" type="identification.py" 
+        name="identification"   output="screen"  args="$(find netft_calib)"/>
+
+</launch>
