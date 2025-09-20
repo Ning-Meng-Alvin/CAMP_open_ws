@@ -4,11 +4,11 @@
 rosbag_recoder: a small Python wrapper around `rosbag record`.
 
 Features:
-- All configs from private params (~) which you load via a YAML file in launch.
+- All configs come from private params (~), typically loaded via YAML in launch.
 - Topic selection via `~topics` (list/string) or YAML; regex/exclude supported.
 - SpaceMouse long press (button0 by default, >=2.0s) toggles START/STOP.
 - Services: ~start, ~stop, ~reload.
-- Splitting by size/duration, compression lz4/bz2, optional auto-stop.
+- Supports splitting by size/duration, compression lz4/bz2, optional auto-stop.
 
 Naming:
 - Output base name is <bag_prefix>_<YYYY-MM-DD>_<HH-MM-SS>
@@ -27,9 +27,13 @@ import yaml
 from sensor_msgs.msg import Joy
 from std_srvs.srv import Trigger, TriggerResponse
 
+GREEN = "\033[92m"
+RED="\033[91m"
+RESET  = "\033[0m"
+
 
 def _to_list(val):
-    """Normalize param to list. Accepts YAML-like string, comma/space separated, or list."""
+    """Normalize a parameter to list. Accepts YAML-like string, comma/space separated, or list."""
     if val is None:
         return []
     if isinstance(val, list):
@@ -51,11 +55,11 @@ class RecorderNode:
     def __init__(self):
         rospy.init_node("rosbag_recoder")
 
-        # ---- General recording params (load via rosparam/YAML in launch) ----
+        # ---- General recording params (loaded via rosparam/YAML in launch) ----
         self.out_dir        = os.path.expanduser(rospy.get_param("~out_dir", "~/.ros/bags"))
         self.bag_prefix     = rospy.get_param("~bag_prefix", "rec")
         self.topics_param   = rospy.get_param("~topics", [])               # list or string
-        self.topics_yaml    = rospy.get_param("~topics_yaml", "")          # optional file path {topics:[...], exclude:[...]}
+        self.topics_yaml    = rospy.get_param("~topics_yaml", "")          # optional YAML {topics:[...], exclude:[...]}
         self.exclude_param  = rospy.get_param("~exclude", [])
         self.use_regex      = bool(rospy.get_param("~use_regex", False))   # -e treat topics as regex
         self.compression    = rospy.get_param("~compression", "lz4")       # lz4|bz2|none
@@ -64,7 +68,7 @@ class RecorderNode:
         self.max_splits     = int(rospy.get_param("~max_splits", 0))       # 0 = unlimited
         self.duration_stop  = int(rospy.get_param("~stop_after_s", 0))     # >0 auto stop after seconds
 
-        # NOTE: Will be passed through to rosbag as-is; unit follows rosbag's CLI (bytes in Noetic).
+        # NOTE: Passed directly to rosbag CLI; unit follows rosbag's CLI (bytes in Noetic).
         self.buffsize       = int(rospy.get_param("~buffsize", 0))         # 0 -> not set
 
         self.all_if_empty   = bool(rospy.get_param("~record_all_if_empty", True))
@@ -82,11 +86,12 @@ class RecorderNode:
         self.rec_start_walltime = 0.0
         self.btn_down = False
         self.btn_down_since = None
+        self.press_fired = False  # <- Ensures one trigger per hold
 
         # Load topics once (can be reloaded)
         self._reload_topic_lists()
 
-        # I/O
+        # ROS I/O
         self.joy_sub = rospy.Subscriber(self.joy_topic, Joy, self._on_joy, queue_size=10)
         self.srv_start  = rospy.Service("~start",  Trigger, self._srv_start)
         self.srv_stop   = rospy.Service("~stop",   Trigger, self._srv_stop)
@@ -95,14 +100,16 @@ class RecorderNode:
         if self.auto_start:
             self.start_recording()
 
-    # ---------- Param helpers ----------
+    # ---------- Parameter helpers ----------
 
     def _reload_topic_lists(self):
+        """Reload topic/exclude lists from params or YAML file."""
         topics_param = self.topics_param
         exclude_param = self.exclude_param
         if self.topics_yaml and os.path.exists(self.topics_yaml):
             try:
-                data = yaml.safe_load(open(self.topics_yaml, 'r')) or {}
+                with open(self.topics_yaml, 'r') as f:
+                    data = yaml.safe_load(f) or {}
                 if "topics" in data:
                     topics_param = data["topics"]
                 if "exclude" in data:
@@ -113,6 +120,7 @@ class RecorderNode:
         self.exclude = _to_list(exclude_param)
 
     def _build_rosbag_cmd(self):
+        """Build the rosbag record command line based on current params."""
         os.makedirs(self.out_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         bag_base = f"{self.bag_prefix}_{ts}"
@@ -137,7 +145,7 @@ class RecorderNode:
             if self.max_splits > 0:
                 cmd += [f"--max-splits={self.max_splits}"]
 
-        # Buffer (pass-through; unit per rosbag CLI)
+        # Buffer size
         if self.buffsize > 0:
             cmd += [f"--buffsize={self.buffsize}"]
 
@@ -157,31 +165,39 @@ class RecorderNode:
 
         return cmd
 
-    # ---------- Joy handling (long-press toggle) ----------
+    # ---------- Joy handling (long-press: one-shot per hold) ----------
 
     def _on_joy(self, msg: Joy):
-        pressed = (len(msg.buttons) > self.start_button_index and msg.buttons[self.start_button_index] == 1)
+        pressed = (len(msg.buttons) > self.start_button_index and
+                   msg.buttons[self.start_button_index] == 1)
         now = rospy.Time.now().to_sec()
 
-        if pressed and not self.btn_down:
-            self.btn_down = True
-            self.btn_down_since = now
-        elif not pressed and self.btn_down:
-            self.btn_down = False
-            self.btn_down_since = None
+        if pressed:
+            # First press -> start timer, mark as not fired
+            if not self.btn_down:
+                self.btn_down = True
+                self.btn_down_since = now
+                self.press_fired = False
 
-        if self.btn_down and self.btn_down_since is not None:
-            if (now - self.btn_down_since) >= self.long_press_sec:
+            # While holding: if not fired and threshold reached -> trigger once
+            if (not self.press_fired) and self.btn_down_since is not None \
+               and (now - self.btn_down_since) >= self.long_press_sec:
                 if not self.recording:
-                    rospy.loginfo("Long press detected -> START recording.")
+                    rospy.loginfo(f"{GREEN}*** Long press detected -> START recording. ***{RESET}")
                     self.start_recording()
                 else:
                     if self.toggle_mode:
-                        rospy.loginfo("Long press detected -> STOP recording.")
+                        rospy.loginfo(f"{RED}*** Long press detected -> STOP recording.***{RESET}")
                         self.stop_recording()
-                # Debounce
+                # Mark fired: no repeat until released
+                self.press_fired = True
+
+        else:
+            # Released -> reset, allow next press to fire
+            if self.btn_down:
                 self.btn_down = False
                 self.btn_down_since = None
+                self.press_fired = False
 
     # ---------- Start / Stop logic ----------
 
@@ -242,7 +258,7 @@ class RecorderNode:
             self.start_recording()
         return TriggerResponse(success=True, message="reloaded topics (and restarted if previously running)")
 
-    # ---------- Spin ----------
+    # ---------- Spin loop ----------
 
     def spin(self):
         rate = rospy.Rate(20)

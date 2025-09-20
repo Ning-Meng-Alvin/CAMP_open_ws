@@ -1,11 +1,11 @@
 <?xml version="1.0" ?>
 <launch>
     <!-- franka initialization -->
-    <include file="$(find franka_scanning)/launch/franka_init.launch" >
+    <!-- <include file="$(find franka_scanning)/launch/franka_init.launch" >
         <arg name="robot_ip" value="172.16.0.2" />
         <arg name="launch_rviz" value="true" />
         <arg name="rviz_config_path" value="$(find franka_scanning)/rviz/rviz_scanning_config.rviz" />
-    </include>
+    </include> -->
 
     <!-- initialize force/torque sensor -->
     <node name = "ft_data_nodes" 

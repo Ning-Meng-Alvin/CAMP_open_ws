@@ -448,7 +448,7 @@ class FrankaManager():
         self._jsf_enabled = False
         self._jsf_request_start = False
         self._jsf_last_time = rospy.Time(0)
-        self._jsf_timeout = rospy.get_param('~jsf_timeout', 1.0)
+        self._jsf_timeout = rospy.get_param('~jsf_timeout', 0.2)
         self._jsf_lock = threading.Lock()
         self._jsf_buffer = deque(maxlen=int(rospy.get_param('~jsf_buffer_len', 2000)))
 

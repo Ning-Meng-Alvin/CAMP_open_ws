@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import rospy
 from moveit_commander import MoveGroupCommander
 from actionlib_msgs.msg import GoalStatusArray
@@ -15,7 +15,7 @@ class ForceCaliDataAcq(object):
     self.rate  = rospy.Rate(1)  # Hz
     self.rate2 = rospy.Rate(50) 
     self.ee_link = end_effector_link
-    self.commander = MoveGroupCommander('panda_arm')
+    self.commander = MoveGroupCommander('Panda_arm')
     _sub_fext = rospy.Subscriber("/netft_data", 
                                   WrenchStamped, self.sub_F_ext_cb,
                                   queue_size=1, tcp_nodelay=True)
@@ -81,7 +81,7 @@ class ForceCaliDataAcq(object):
             data_list.append(data_line)
     return data_list
 
-  def sub_F_ext_cb(self, msg):
+  def sub_F_ext_cb(self, msg:WrenchStamped):
     self.Fext = [msg.wrench.force.x,  msg.wrench.force.y,  msg.wrench.force.z,
                  msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z]
     # Averaging the received data to suppress the random noise

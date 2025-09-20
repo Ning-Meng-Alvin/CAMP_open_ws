@@ -1,10 +1,10 @@
 <?xml version="1.0" ?>
 <launch>
     <!-- franka initialization -->
-    <include file="$(find netft_calib)/launch/netft_init.launch" >
+    <!-- <include file="$(find netft_calib)/launch/netft_init.launch" >
         <arg name="robot_ip" value="172.16.0.2" />
         <arg name="rviz_config_path" value="$(find netft_calib)/rviz/netft_rviz_config.rviz" />
-    </include>
+    </include> -->
 
     <!-- initialize force/torque sensor -->
     <node name = "ft_data_nodes" 
