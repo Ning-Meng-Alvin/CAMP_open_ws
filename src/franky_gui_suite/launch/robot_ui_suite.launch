@@ -1,0 +1,6 @@
+<launch>
+  <node name="robot_ui_suite"
+        pkg="franky_gui_suite"
+        type="robot_ui_suite.sh"
+        output="screen"/>
+</launch>

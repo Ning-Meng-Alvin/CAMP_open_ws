@@ -6,7 +6,6 @@ Panels:
       Expanded:
         - /MotionPlanning1
         - /RobotModel1
-        - /RobotModel1/Status1
         - /TF1
         - /TF1/Frames1
       Splitter Ratio: 0.5
@@ -43,7 +42,7 @@ Visualization Manager:
       Plane Cell Count: 10
       Reference Frame: <Fixed Frame>
       Value: true
-    - Acceleration_Scaling_Factor: 1
+    - Acceleration_Scaling_Factor: 0.6000000000000001
       Class: moveit_rviz_plugin/MotionPlanning
       Enabled: true
       JointsTab_Use_Radians: true
@@ -235,7 +234,7 @@ Visualization Manager:
         Show Robot Collision: false
         Show Robot Visual: true
       Value: true
-      Velocity_Scaling_Factor: 1
+      Velocity_Scaling_Factor: 0.6000000000000001
     - Alpha: 1
       Class: rviz/RobotModel
       Collision Enabled: false
@@ -407,7 +406,7 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: RGB8
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Min Color: 0; 0; 0
@@ -422,7 +421,7 @@ Visualization Manager:
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -439,7 +438,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 17.375751495361328
+      Distance: 2.446505546569824
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -447,17 +446,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.75
       Focal Point:
-        X: 0.9521867036819458
-        Y: -0.17726704478263855
-        Z: 0.21782808005809784
+        X: 0.6158400774002075
+        Y: 8.913781493902206e-05
+        Z: 0.22109203040599823
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.2699998617172241
+      Pitch: 0.4349997937679291
       Target Frame: panda_link0
-      Yaw: 1.426764726638794
+      Yaw: 0.8017640709877014
     Saved: ~
 Window Geometry:
   Displays:
@@ -478,4 +477,4 @@ Window Geometry:
     collapsed: false
   Width: 2451
   X: 1103
-  Y: 148
+  Y: 111

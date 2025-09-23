@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>franky_gui_suite</name>
+  <version>0.1.0</version>
+  <description>PyQt-based multi-panel GUI for telecontrol, bag->JointState replay, controller, and JSON viewer.</description>
+
+  <maintainer email="lpei82060@gmail.com">Pei</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <exec_depend>python3</exec_depend>
+</package>
