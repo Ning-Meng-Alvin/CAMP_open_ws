@@ -1,7 +1,7 @@
 moveit_setup_assistant_config:
   URDF:
     package: ""
-    relative_path: /home/camp/ros1_project/franka_backup/panda.urdf
+    relative_path: /home/camp/CampUsers/Pei/open_ws/src/franky_moveit_config/config/panda_arm.urdf
     xacro_args: ""
   SRDF:
     relative_path: config/panda.srdf

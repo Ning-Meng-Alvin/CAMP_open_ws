@@ -1,0 +1,27 @@
+<launch>
+  <!-- ===== File path arguments ===== -->
+  <arg name="urdf_file"         default="$(find franka_panda_moveit_config)/config/panda.urdf"/>
+  <arg name="srdf"              default="$(find franka_panda_moveit_config)/config/panda.srdf"/>
+  <arg name="kinematics_yaml"   default="$(find franka_panda_moveit_config)/config/kinematics.yaml"/>
+  <arg name="joint_limits_yaml" default="$(find franka_panda_moveit_config)/config/joint_limits.yaml"/>
+  <arg name="servo_yaml"        default="$(find franka_panda_moveit_config)/config/my_servo.yaml"/>
+
+  <!-- Frame settings -->
+  <arg name="planning_frame" default="panda_link0"/>
+  <arg name="ee_link"        default="panda_link8"/>
+
+  <!-- ===== Load configuration files ===== -->
+  <!-- URDF / SRDF  -->
+  <rosparam command="load" file="$(arg kinematics_yaml)"/>
+  <rosparam command="load" file="$(arg joint_limits_yaml)"/>
+
+  <!-- Servo config must be loaded into both namespaces -->
+  <rosparam command="load" file="$(arg servo_yaml)" ns="servo_server"/>
+  <rosparam command="load" file="$(arg servo_yaml)" ns="moveit_servo"/>
+
+  <!-- ===== Start Servo Server ===== -->
+  <node pkg="moveit_servo" type="servo_server" name="servo_server" output="screen">
+    <param name="planning_frame" value="$(arg planning_frame)"/>
+    <param name="ee_frame_name"  value="$(arg ee_link)"/>
+  </node>
+</launch>

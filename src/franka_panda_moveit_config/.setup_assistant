@@ -1,0 +1,11 @@
+moveit_setup_assistant_config:
+  URDF:
+    package: ""
+    relative_path: /home/camp/CampUsers/Pei/open_ws/src/franka_panda_moveit_config/config/panda_arm.urdf
+    xacro_args: ""
+  SRDF:
+    relative_path: config/panda.srdf
+  CONFIG:
+    author_name: Pei Liu
+    author_email: pei_liu0913@163.com
+    generated_timestamp: 1757778484

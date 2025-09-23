@@ -20,9 +20,35 @@
         <rosparam command="load" file="$(find rosbag_recoder)/config/recorder.yaml"/>
     </node>
 
+    <!-- initialize force/torque sensor -->
+    <node name = "ft_data_nodes" 
+        pkg = "netft_utils"  
+        type = "netft_node"
+        output = "log" 
+        args = "172.31.1.177"/> 
+        <!-- args = "192.168.106.100"/> -->
+
+    <!-- load force calibration result -->
+    <include file="$(find netft_calib)/launch/check_netft_calib.launch"/>
+
+    <!-- <rosparam command="load" file="$(find netft_calib)/config/netft_calib_result.yaml"/> -->
+  
+    <!-- check calibration -->
+    <!-- <node name="netft_calib_node" pkg="netft_calib" type="pub_calib_result.py" output="log"/> -->
 
     <!-- load realsense cameras -->
     <!-- <include file="$(find franka_policy)/launch/rs_multiple_devices.launch"/> -->
+        <!-- (start your tracking system's ROS driver) -->
+    <include file="$(find realsense2_camera)/launch/rs_camera.launch"> </include>  
+
+    <!-- Hand-eye TF  -->
+    <node pkg="easy_handeye"
+          type="publish_base_to_camera.py"
+          name="publish_base_to_camera"
+          output="log"
+          respawn_delay="5.0" />
+
+
 
 </launch>
 
