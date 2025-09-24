@@ -12,6 +12,7 @@ Panes (left -> right):
 Notes:
 - Uses `setsid` if available for proper Ctrl-C to the whole group.
 - All UI labels & comments are in English.
+- This version ONLY forwards STDOUT (no STDERR) for process panes by default.
 """
 
 import os, sys, re, json, signal, pathlib, shutil
@@ -86,12 +87,21 @@ class AnsiToHtml:
 class ProcessPane(QtWidgets.QWidget):
     MAX_BLOCKS = 5000
 
-    def __init__(self, title: str, parent=None):
+    def __init__(self, title: str, parent=None, echo_cmd: bool = True,
+                 capture_stderr: bool = False, force_chunk_newline: bool = False):
+        """
+        :param echo_cmd: Whether to echo the full launch command into the UI.
+        :param capture_stderr: If True, also forward STDERR; default False (stdout only).
+        :param force_chunk_newline: If True, add a newline after EVERY received stdout chunk.
+        """
         super().__init__(parent)
         self.setObjectName(title.replace(" ", "_"))
         self.ansi = AnsiToHtml()
         self.proc = None
         self.current_cmd = None
+        self.echo_cmd = echo_cmd
+        self.capture_stderr = capture_stderr
+        self.force_chunk_newline = force_chunk_newline
 
         v = QtWidgets.QVBoxLayout(self)
         h = QtWidgets.QHBoxLayout()
@@ -140,6 +150,9 @@ class ProcessPane(QtWidgets.QWidget):
         html = self.ansi.convert(text)
         self.out.moveCursor(QtGui.QTextCursor.End)
         self.out.insertHtml(html)
+        # 强制每个块都在视觉上换行（即使块内已有换行）
+        if self.force_chunk_newline:
+            self.out.insertHtml("<br/>")
         self.out.moveCursor(QtGui.QTextCursor.End)
 
         doc = self.out.document()
@@ -177,11 +190,13 @@ class ProcessPane(QtWidgets.QWidget):
         if self.proc:
             self.status.setText("Status: already running"); return
         self.out.append("<pre style='color:#aaa'>[start]</pre>")
-        self.out.append(f"<pre style='color:#888'>{' '.join(self.current_cmd)}</pre>")
+        if self.echo_cmd:
+            self.out.append(f"<pre style='color:#888'>{' '.join(self.current_cmd)}</pre>")
         self.proc = QtCore.QProcess(self)
         self.proc.setProcessChannelMode(QtCore.QProcess.SeparateChannels)
         self.proc.readyReadStandardOutput.connect(self._on_ready_stdout)
-        self.proc.readyReadStandardError.connect(self._on_ready_stderr)
+        if self.capture_stderr:
+            self.proc.readyReadStandardError.connect(self._on_ready_stderr)
         self.proc.finished.connect(self._on_finished)
         self.proc.start(self.current_cmd[0], self.current_cmd[1:])
         self.status.setText("Status: running")
@@ -578,8 +593,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         splitter = QtWidgets.QSplitter(Qt.Horizontal)
 
-        # Pane 1: Telecontrol roslaunch
-        self.p1 = ProcessPane("RViz / Telecontrol Launch")
+        # Pane 1: Telecontrol roslaunch (echo command OK; stdout only)
+        self.p1 = ProcessPane("RViz / Telecontrol Launch", echo_cmd=True, capture_stderr=False)
         cmd1 = " && ".join([
             "cd ~/CampUsers/Pei/open_ws",
             "source /opt/ros/noetic/setup.bash",
@@ -591,8 +606,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Pane 2: Bag → JointState Replayer
         self.p2 = BagReplayerPane()
 
-        # Pane 3: Controller (conda + python) — unbuffered output
-        self.p3 = ProcessPane("Controller (conda + python script)")
+        # Pane 3: Controller (conda + python) — unbuffered output; no command echo; stdout only; chunk newline
+        self.p3 = ProcessPane("Controller (conda + python script)",
+                              echo_cmd=False, capture_stderr=False,
+                              force_chunk_newline=True)
         cmd3 = " && ".join([
             'if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then source "$HOME/miniconda3/etc/profile.d/conda.sh"; '
             'elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then source "$HOME/anaconda3/etc/profile.d/conda.sh"; '
@@ -625,14 +642,7 @@ class MainWindow(QtWidgets.QMainWindow):
         filem = bar.addMenu("File")
         act_quit = filem.addAction("Quit"); act_quit.triggered.connect(self.close)
 
-        tools = bar.addMenu("Tools")
-        tools.addAction("Start Telecontrol").triggered.connect(self.p1.start)
-        tools.addAction("Restart Telecontrol").triggered.connect(self.p1.restart)
-        tools.addAction("Stop Telecontrol").triggered.connect(self.p1.stop)
-        tools.addSeparator()
-        tools.addAction("Start Controller").triggered.connect(self.p3.start)
-        tools.addAction("Restart Controller").triggered.connect(self.p3.restart)
-        tools.addAction("Stop Controller").triggered.connect(self.p3.stop)
+  
 
     def closeEvent(self, e: QtGui.QCloseEvent):
         # Graceful shutdown on window close
@@ -647,8 +657,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
+    QtGui.QGuiApplication.setDesktopFileName("robot_ui_suite.desktop")
+    app.setApplicationName("Robot UI Suite")
+    app.setWindowIcon(QtGui.QIcon("/home/camp/.local/share/icons/robot_ui_suite.jpeg"))
+
     w = MainWindow(); w.show()
     sys.exit(app.exec_())
+
 
 if __name__ == "__main__":
     main()
