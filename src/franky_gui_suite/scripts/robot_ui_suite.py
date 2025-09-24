@@ -150,7 +150,7 @@ class ProcessPane(QtWidgets.QWidget):
         html = self.ansi.convert(text)
         self.out.moveCursor(QtGui.QTextCursor.End)
         self.out.insertHtml(html)
-        # 强制每个块都在视觉上换行（即使块内已有换行）
+        
         if self.force_chunk_newline:
             self.out.insertHtml("<br/>")
         self.out.moveCursor(QtGui.QTextCursor.End)
@@ -593,8 +593,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         splitter = QtWidgets.QSplitter(Qt.Horizontal)
 
-        # Pane 1: Telecontrol roslaunch (echo command OK; stdout only)
-        self.p1 = ProcessPane("RViz / Telecontrol Launch", echo_cmd=True, capture_stderr=False)
+        # ---------------------------
+        # Pane 1: RViz / Telecontrol Launch
+        # ---------------------------
+        # stdout is internally captured, but UI only shows start/restart/stop logs
+        # Pane 1: RViz / Telecontrol Launch
+        self.p1 = ProcessPane(
+            "RViz / Telecontrol Launch",
+            echo_cmd=False,           # do not echo full command at start
+            capture_stderr=True,      # capture stderr as well
+            force_chunk_newline=True  # display in chunks, like window3
+        )
         cmd1 = " && ".join([
             "cd ~/CampUsers/Pei/open_ws",
             "source /opt/ros/noetic/setup.bash",
@@ -603,13 +612,70 @@ class MainWindow(QtWidgets.QMainWindow):
         ])
         self.p1.set_command(cmd1)
 
+        # Override start method: show [start], capture all stdout/stderr
+        def _start_override():
+            if not self.p1.current_cmd:
+                self.p1.status.setText("Status: no command set")
+                return
+            if self.p1.proc:
+                self.p1.status.setText("Status: already running")
+                return
+            self.p1.out.append("<pre style='color:#aaa'>[start]</pre>")
+            self.p1.proc = QtCore.QProcess(self.p1)
+            self.p1.proc.setProcessChannelMode(QtCore.QProcess.SeparateChannels)
+            self.p1.proc.readyReadStandardOutput.connect(lambda:
+                self.p1.append_ansi(self.p1.proc.readAllStandardOutput().data())
+            )
+            self.p1.proc.readyReadStandardError.connect(lambda:
+                self.p1.append_ansi(self.p1.proc.readAllStandardError().data())
+            )
+            self.p1.proc.finished.connect(self.p1._on_finished)
+            self.p1.proc.start(self.p1.current_cmd[0], self.p1.current_cmd[1:])
+            self.p1.status.setText("Status: running")
+        self.p1.start = _start_override
+
+        # Override restart method: show [restart -> Ctrl-C]
+        def _restart_override():
+            if self.p1.proc:
+                self.p1.out.append("<pre style='color:#aaa'>[restart -> Ctrl-C]</pre>")
+                self.p1._send_sigint_group()
+                self.p1.proc.waitForFinished(2000)
+                if self.p1.proc:
+                    try: os.killpg(int(self.p1.proc.processId()), signal.SIGTERM)
+                    except Exception: self.p1.proc.kill()
+                    self.p1.proc.waitForFinished(2000)
+                self.p1.proc = None
+            self.p1.start()
+        self.p1.restart = _restart_override
+
+        # Override stop method: show [stop]
+        def _stop_override():
+            if not self.p1.proc:
+                self.p1.status.setText("Status: not running")
+                return
+            self.p1.out.append("<pre style='color:#aaa'>[stop]</pre>")
+            self.p1._send_sigint_group()
+            if not self.p1.proc.waitForFinished(2000):
+                try: os.killpg(int(self.p1.proc.processId()), signal.SIGTERM)
+                except Exception: self.p1.proc.kill()
+                self.p1.proc.waitForFinished(2000)
+            self.p1.proc = None
+            self.p1.status.setText("Status: stopped")
+        self.p1.stop = _stop_override
+
+        # ---------------------------
         # Pane 2: Bag → JointState Replayer
+        # ---------------------------
         self.p2 = BagReplayerPane()
 
-        # Pane 3: Controller (conda + python) — unbuffered output; no command echo; stdout only; chunk newline
-        self.p3 = ProcessPane("Controller (conda + python script)",
-                              echo_cmd=False, capture_stderr=False,
-                              force_chunk_newline=True)
+        # ---------------------------
+        # Pane 3: Controller (conda + python)
+        # ---------------------------
+        # stdout is forced newline chunks, no command echo
+        self.p3 = ProcessPane(
+            "Controller (conda + python script)",
+            echo_cmd=False, capture_stderr=False, force_chunk_newline=True
+        )
         cmd3 = " && ".join([
             'if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then source "$HOME/miniconda3/etc/profile.d/conda.sh"; '
             'elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then source "$HOME/anaconda3/etc/profile.d/conda.sh"; '
@@ -621,31 +687,35 @@ class MainWindow(QtWidgets.QMainWindow):
         ])
         self.p3.set_command(cmd3)
 
-        # Pane 4: JSON viewer
+        # ---------------------------
+        # Pane 4: JSON Command Viewer
+        # ---------------------------
         self.p4 = JsonPane()
 
+        # Add panes to splitter
         splitter.addWidget(self.p1)
         splitter.addWidget(self.p2)
         splitter.addWidget(self.p3)
         splitter.addWidget(self.p4)
 
+        # Set stretch factors (relative width)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
         splitter.setStretchFactor(2, 2)
         splitter.setStretchFactor(3, 1)
         self.setCentralWidget(splitter)
 
-        self._make_menu()
-
-    def _make_menu(self):
+        # ---------------------------
+        # Menu
+        # ---------------------------
         bar = self.menuBar()
         filem = bar.addMenu("File")
         act_quit = filem.addAction("Quit"); act_quit.triggered.connect(self.close)
 
-  
-
+    # ---------------------------
+    # Graceful shutdown on close
+    # ---------------------------
     def closeEvent(self, e: QtGui.QCloseEvent):
-        # Graceful shutdown on window close
         for fn in (getattr(self.p1, "stop", None),
                    getattr(self.p3, "stop", None),
                    getattr(self.p2, "stop_replay", None)):
@@ -654,6 +724,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
         super().closeEvent(e)
+
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
