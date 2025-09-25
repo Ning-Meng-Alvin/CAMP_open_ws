@@ -21,6 +21,8 @@ import signal
 import subprocess
 import time
 from datetime import datetime
+import sys
+
 
 import rospy
 import yaml
@@ -28,7 +30,7 @@ from sensor_msgs.msg import Joy
 from std_srvs.srv import Trigger, TriggerResponse
 
 GREEN = "\033[92m"
-RED="\033[91m"
+BLUE="\033[96m"
 RESET  = "\033[0m"
 
 
@@ -184,10 +186,14 @@ class RecorderNode:
                and (now - self.btn_down_since) >= self.long_press_sec:
                 if not self.recording:
                     rospy.loginfo(f"{GREEN}*** Long press detected -> START recording. ***{RESET}")
+                    # ensure raw ANSI goes to stdout for external capturers
+                    print(f"{GREEN}*** Long press detected -> START recording. ***{RESET}", flush=True)
                     self.start_recording()
                 else:
                     if self.toggle_mode:
-                        rospy.loginfo(f"{RED}*** Long press detected -> STOP recording.***{RESET}")
+                        rospy.loginfo(f"{BLUE}*** Long press detected -> STOP recording.***{RESET}")
+                        # ensure raw ANSI goes to stdout for external capturers
+                        print(f"{BLUE}*** Long press detected -> STOP recording.***{RESET}", flush=True)
                         self.stop_recording()
                 # Mark fired: no repeat until released
                 self.press_fired = True
@@ -212,6 +218,8 @@ class RecorderNode:
             return
 
         rospy.loginfo("Starting rosbag: %s", " ".join(cmd))
+        # also print plain line to stdout so external QProcess sees it (may be without ANSI)
+        print("Starting rosbag: " + " ".join(cmd), flush=True)
         try:
             self.proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
             self.recording = True
@@ -237,6 +245,8 @@ class RecorderNode:
             self.proc = None
             self.recording = False
             rospy.loginfo("Recording stopped. Bags at: %s", self.out_dir)
+            # also print plain line to stdout so external QProcess sees it (may be without ANSI)
+            print("Recording stopped. Bags at: " + self.out_dir, flush=True)
 
     # ---------- Services ----------
 

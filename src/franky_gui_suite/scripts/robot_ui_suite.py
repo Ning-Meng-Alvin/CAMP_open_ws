@@ -15,7 +15,7 @@ Notes:
 - This version ONLY forwards STDOUT (no STDERR) for process panes by default.
 """
 
-import os, sys, re, json, signal, pathlib, shutil
+import os, sys, re, json, signal, pathlib, shutil, shlex
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import Qt
@@ -72,7 +72,7 @@ class AnsiToHtml:
     def convert(self,text:str)->str:
         def esc(s:str)->str:
             return (s.replace("&","&amp;").replace("<","&lt;")
-                      .replace(">","&gt;").replace("\t","    "))
+                     .replace(">","&gt;").replace("\t","    "))
         pos=0; html=[]
         for m in self.ANSI_RE.finditer(text):
             html.append(esc(text[pos:m.start()]))
@@ -150,7 +150,7 @@ class ProcessPane(QtWidgets.QWidget):
         html = self.ansi.convert(text)
         self.out.moveCursor(QtGui.QTextCursor.End)
         self.out.insertHtml(html)
-        
+
         if self.force_chunk_newline:
             self.out.insertHtml("<br/>")
         self.out.moveCursor(QtGui.QTextCursor.End)
@@ -193,10 +193,14 @@ class ProcessPane(QtWidgets.QWidget):
         if self.echo_cmd:
             self.out.append(f"<pre style='color:#888'>{' '.join(self.current_cmd)}</pre>")
         self.proc = QtCore.QProcess(self)
-        self.proc.setProcessChannelMode(QtCore.QProcess.SeparateChannels)
-        self.proc.readyReadStandardOutput.connect(self._on_ready_stdout)
         if self.capture_stderr:
-            self.proc.readyReadStandardError.connect(self._on_ready_stderr)
+            self.proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
+            self.proc.readyReadStandardOutput.connect(self._on_ready_stdout)
+        else:
+            self.proc.setProcessChannelMode(QtCore.QProcess.SeparateChannels)
+            self.proc.readyReadStandardOutput.connect(self._on_ready_stdout)
+            if self.capture_stderr:
+                self.proc.readyReadStandardError.connect(self._on_ready_stderr)
         self.proc.finished.connect(self._on_finished)
         self.proc.start(self.current_cmd[0], self.current_cmd[1:])
         self.status.setText("Status: running")
@@ -313,16 +317,19 @@ class BagReplayWorker(QtCore.QThread):
         except Exception as e:
             self.error.emit(str(e))
 
+
 class BagReplayerPane(QtWidgets.QWidget):
     """Mouse-friendly JointState bag replayer with stable multi-selection & delete."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.worker = None
-        self._refresh_paused = False  # pause auto-refresh while user is interacting
+        self.cali_proc = None
+        self.cali_hand_proc = None
+        self.ansi = AnsiToHtml()
+        self._refresh_paused = False
 
         layout = QtWidgets.QVBoxLayout(self)
 
-        # ---- Header ----
         hdr = QtWidgets.QHBoxLayout()
         title = QtWidgets.QLabel("<b>Bag → JointState Replayer</b>")
         title.setTextFormat(Qt.RichText)
@@ -330,31 +337,26 @@ class BagReplayerPane(QtWidgets.QWidget):
         self.status = QtWidgets.QLabel("idle"); hdr.addWidget(self.status)
         layout.addLayout(hdr)
 
-        # ---- Folder row ----
         row = QtWidgets.QHBoxLayout()
         self.dir_edit = QtWidgets.QLineEdit(str(pathlib.Path("/home/camp/ros_bags").expanduser()))
         btn_browse = QtWidgets.QPushButton("Browse")
         row.addWidget(QtWidgets.QLabel("Folder:")); row.addWidget(self.dir_edit, 1); row.addWidget(btn_browse)
         layout.addLayout(row)
 
-        # ---- Left list ----
         self.list_widget = QtWidgets.QListWidget()
-        self.list_widget.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)  # multi-select
+        self.list_widget.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.list_widget.setMinimumWidth(420)
         self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list_widget.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list_widget.setUniformItemSizes(True)
         self.list_widget.setAlternatingRowColors(True)
-        # Make inactive selection look the same as active (so it doesn't "disappear")
         self.list_widget.setStyleSheet(
             "QListWidget::item:selected { background:#3d6dcc; color:#ffffff; }"
             "QListWidget::item:selected:!active { background:#3d6dcc; color:#ffffff; }"
         )
-        # Pause refresh while user is interacting with the list
         self.list_widget.installEventFilter(self)
 
-        # ---- Right controls ----
         form = QtWidgets.QFormLayout()
         self.out_topic = QtWidgets.QLineEdit("/joint_state_follower")
         self.source_topics = QtWidgets.QLineEdit()
@@ -381,29 +383,42 @@ class BagReplayerPane(QtWidgets.QWidget):
         inner = QtWidgets.QSplitter(Qt.Horizontal)
         inner.addWidget(self.list_widget); inner.addWidget(right)
         inner.setStretchFactor(0, 1); inner.setStretchFactor(1, 2); inner.setSizes([480, 900])
+        
+        # --- MODIFICATION START: Adjust stretch factors ---
+        # Give the top controls (inner) more weight (2) than the bottom log (out, 1)
+        # This makes the log area smaller.
+        layout.addWidget(inner, 2) 
 
-        layout.addWidget(inner, 1)
+        cali_layout = QtWidgets.QHBoxLayout()
+        self.btn_cali = QtWidgets.QPushButton("eye-on-base cali")
+        self.btn_cali_hand = QtWidgets.QPushButton("eye-on-hand cali")
+        cali_layout.addWidget(self.btn_cali)
+        cali_layout.addWidget(self.btn_cali_hand)
+        cali_layout.addStretch(1)
+        layout.addLayout(cali_layout)
 
-        # ---- Output area ----
         self.out = QtWidgets.QTextEdit(); self.out.setReadOnly(True)
         self.out.setStyleSheet("QTextEdit { background:#000; color:#fff; }")
-        layout.addWidget(self.out, 1)
+        layout.addWidget(self.out, 1) # This log area gets less stretch weight
+        # --- MODIFICATION END ---
 
-        # ---- Hooks ----
+        self.bottom_status_bar = QtWidgets.QLabel("Status: idle")
+        layout.addWidget(self.bottom_status_bar)
+
         btn_browse.clicked.connect(self._choose_dir)
         self.btn_refresh.clicked.connect(self.refresh_list)
         self.btn_start.clicked.connect(self.start_replay)
         self.btn_stop.clicked.connect(self.stop_replay)
         self.btn_delete.clicked.connect(self.delete_selected)
+        self.btn_cali.clicked.connect(self.toggle_calibration)
+        self.btn_cali_hand.clicked.connect(self.toggle_calibration_hand)
 
         del_action = QtWidgets.QAction(self); del_action.setShortcut(Qt.Key_Delete)
         del_action.triggered.connect(self.delete_selected); self.addAction(del_action)
 
-        # Auto-refresh bag list every second
         self.timer = QtCore.QTimer(self); self.timer.timeout.connect(self.refresh_list)
         self.timer.start(1000); self.refresh_list()
 
-    # ---- Pause auto-refresh while interacting with the list ----
     def eventFilter(self, obj, ev):
         if obj is self.list_widget:
             t = ev.type()
@@ -419,30 +434,24 @@ class BagReplayerPane(QtWidgets.QWidget):
             self.dir_edit.setText(d); self.refresh_list()
 
     def refresh_list(self):
-        if self._refresh_paused:  # do nothing while user is interacting
+        if self._refresh_paused:
             return
         folder = self.dir_edit.text().strip()
         items = _list_bags(folder)
-
-        # remember previously selected names
         prev_selected = {self.list_widget.item(i).text()
                          for i in range(self.list_widget.count())
                          if self.list_widget.item(i).isSelected()}
-
-        # rebuild list while keeping selection stable
         self.list_widget.setUpdatesEnabled(False)
         self.list_widget.clear()
         for name in items:
             it = QtWidgets.QListWidgetItem(name)
             it.setToolTip(name)
             self.list_widget.addItem(it)
-        # re-select after items are in the widget
         for i in range(self.list_widget.count()):
             it = self.list_widget.item(i)
             if it.text() in prev_selected:
                 it.setSelected(True)
         self.list_widget.setUpdatesEnabled(True)
-
         self.count_lbl.setText(f"{len(items)} bags")
 
     def _append(self, text: str, dim=False):
@@ -463,7 +472,6 @@ class BagReplayerPane(QtWidgets.QWidget):
         stxt = self.source_topics.text()
         speed = float(self.speed.value())
         do_reorder = self.chk_reorder.isChecked()
-
         self._append(f"[start] {bag_name} -> {out_topic} (speed x{speed})", True)
         self.worker = BagReplayWorker(
             bag_path=bag_name, base_dir=base_dir, out_topic=out_topic,
@@ -516,7 +524,110 @@ class BagReplayerPane(QtWidgets.QWidget):
         if self.worker: self.worker.wait(200)
         self.worker=None; self._set_status(status)
 
-    def _set_status(self, s: str): self.status.setText(s)
+    def _set_status(self, s: str):
+        self.status.setText(s)
+        self.bottom_status_bar.setText(f"Status: {s}")
+
+    def _get_clean_environment(self):
+        env = QtCore.QProcessEnvironment.systemEnvironment()
+        for key in env.keys():
+            if key.startswith("QT_"):
+                env.remove(key)
+        return env
+
+    def _create_pty_command(self, base_cmd_str):
+        parts = base_cmd_str.split("roslaunch", 1)
+        if len(parts) != 2:
+            inner_cmd = base_cmd_str
+        else:
+            setup_part = parts[0]
+            roslaunch_part = "roslaunch" + parts[1]
+            if "--screen" not in roslaunch_part:
+                roslaunch_part = roslaunch_part.replace("roslaunch", "roslaunch --screen", 1)
+            inner_cmd = f"{setup_part} stdbuf -oL -eL {roslaunch_part}"
+        inner = f"export TERM=xterm-256color; {inner_cmd}"
+        wrapped = f"script -q -c {shlex.quote(inner)} /dev/null"
+        return ["bash", "-lc", wrapped]
+
+    def toggle_calibration(self):
+        if self.cali_proc: self.stop_calibration()
+        else: self.start_calibration()
+
+    def start_calibration(self):
+        if self.cali_proc:
+            self._append("[cali-base] Already running.", True); return
+        self._append("[cali-base] Starting...", True)
+        self.btn_cali.setText("Stop (base)")
+        cmd_str = (
+            "cd ~/CampUsers/Pei/open_ws && "
+            "source /opt/ros/noetic/setup.bash && "
+            "source devel/setup.bash && "
+            "roslaunch easy_handeye panda_realsense_eyeonbase.launch"
+        )
+        final_cmd = self._create_pty_command(cmd_str)
+        self._append(f"[cali-base] Running: {' '.join(final_cmd)}", True)
+        self.cali_proc = QtCore.QProcess(self)
+        clean_env = self._get_clean_environment()
+        self.cali_proc.setProcessEnvironment(clean_env)
+        self.cali_proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
+        self.cali_proc.finished.connect(self._on_cali_finished)
+        self.cali_proc.start(final_cmd[0], final_cmd[1:])
+
+    def stop_calibration(self):
+        self._append("[cali-base] Stopping process...", True)
+        if self.cali_proc and self.cali_proc.state() != QtCore.QProcess.NotRunning:
+            try: os.kill(self.cali_proc.processId(), signal.SIGINT)
+            except OSError: self.cali_proc.terminate()
+        QtCore.QTimer.singleShot(2000, self._cleanup_cali)
+
+    def _on_cali_finished(self, code, status):
+        self._append(f"[cali-base] Process finished (code={code})", True)
+        self._cleanup_cali()
+
+    def _cleanup_cali(self):
+        self.cali_proc = None
+        self.btn_cali.setText("eye-on-base cali")
+        self._append("[cali-base] Sequence finished or stopped.", True)
+
+    def toggle_calibration_hand(self):
+        if self.cali_hand_proc: self.stop_calibration_hand()
+        else: self.start_calibration_hand()
+
+    def start_calibration_hand(self):
+        if self.cali_hand_proc:
+            self._append("[cali-hand] Already running.", True); return
+        self._append("[cali-hand] Starting...", True)
+        self.btn_cali_hand.setText("Stop (hand)")
+        cmd_str = (
+            "cd ~/CampUsers/Pei/open_ws && "
+            "source /opt/ros/noetic/setup.bash && "
+            "source devel/setup.bash && "
+            "roslaunch easy_handeye panda_realsense_eyeonhand.launch"
+        )
+        final_cmd = self._create_pty_command(cmd_str)
+        self._append(f"[cali-hand] Running: {' '.join(final_cmd)}", True)
+        self.cali_hand_proc = QtCore.QProcess(self)
+        clean_env = self._get_clean_environment()
+        self.cali_hand_proc.setProcessEnvironment(clean_env)
+        self.cali_hand_proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
+        self.cali_hand_proc.finished.connect(self._on_cali_hand_finished)
+        self.cali_hand_proc.start(final_cmd[0], final_cmd[1:])
+
+    def stop_calibration_hand(self):
+        self._append("[cali-hand] Stopping process...", True)
+        if self.cali_hand_proc and self.cali_hand_proc.state() != QtCore.QProcess.NotRunning:
+            try: os.kill(self.cali_hand_proc.processId(), signal.SIGINT)
+            except OSError: self.cali_hand_proc.terminate()
+        QtCore.QTimer.singleShot(2000, self._cleanup_cali_hand)
+
+    def _on_cali_hand_finished(self, code, status):
+        self._append(f"[cali-hand] Process finished (code={code})", True)
+        self._cleanup_cali_hand()
+
+    def _cleanup_cali_hand(self):
+        self.cali_hand_proc = None
+        self.btn_cali_hand.setText("eye-on-hand cali")
+        self._append("[cali-hand] Sequence finished or stopped.", True)
 
 # =========================================================
 # JSON Command Viewer
@@ -525,26 +636,34 @@ class JsonPane(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.commands = []; self.idx = 0
-        v = QtWidgets.QVBoxLayout(self)
+        v_main = QtWidgets.QVBoxLayout(self)
+
+        top_widget = QtWidgets.QWidget()
+        v_top = QtWidgets.QVBoxLayout(top_widget)
+        v_top.setContentsMargins(0, 0, 0, 0)
 
         h = QtWidgets.QHBoxLayout()
         title = QtWidgets.QLabel("<b>JSON Command Viewer</b>"); title.setTextFormat(Qt.RichText)
         h.addWidget(title); h.addStretch(1)
         self.btn_load = QtWidgets.QPushButton("Load JSON")
-        h.addWidget(self.btn_load); v.addLayout(h)
+        h.addWidget(self.btn_load)
+        v_top.addLayout(h)
 
-        self.path_lbl = QtWidgets.QLabel("File: (none)"); v.addWidget(self.path_lbl)
+        self.path_lbl = QtWidgets.QLabel("File: (none)")
+        v_top.addWidget(self.path_lbl)
+        v_main.addWidget(top_widget)
 
         self.view = QtWidgets.QTextEdit(); self.view.setReadOnly(True)
         self.view.setStyleSheet("QTextEdit { background:#111; color:#fff; }")
-        v.addWidget(self.view,1)
+        v_main.addWidget(self.view, 1)
 
         nav = QtWidgets.QHBoxLayout()
         self.btn_prev = QtWidgets.QPushButton("Prev")
         self.btn_next = QtWidgets.QPushButton("Next")
         self.index_lbl = QtWidgets.QLabel("0 / 0")
         nav.addWidget(self.btn_prev); nav.addWidget(self.btn_next)
-        nav.addStretch(1); nav.addWidget(self.index_lbl); v.addLayout(nav)
+        nav.addStretch(1); nav.addWidget(self.index_lbl)
+        v_main.addLayout(nav)
 
         self.btn_load.clicked.connect(self.load_json)
         self.btn_prev.clicked.connect(self.prev)
@@ -588,7 +707,7 @@ class JsonPane(QtWidgets.QWidget):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Robot Multi-Panel UI (PyQt5)")
+        self.setWindowTitle("Robot Multi-Panel UI")
         self.resize(1680, 960)
 
         splitter = QtWidgets.QSplitter(Qt.Horizontal)
@@ -596,15 +715,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # ---------------------------
         # Pane 1: RViz / Telecontrol Launch
         # ---------------------------
-        # stdout is internally captured, but UI only shows start/restart/stop logs
-        # Pane 1: RViz / Telecontrol Launch
         self.p1 = ProcessPane(
             "RViz / Telecontrol Launch",
-            echo_cmd=False,           # do not echo full command at start
-            capture_stderr=True,      # capture stderr as well
-            force_chunk_newline=True  # display in chunks, like window3
+            echo_cmd=False,
+            capture_stderr=True,
+            force_chunk_newline=True
         )
         cmd1 = " && ".join([
+            "source ~/.bashrc",
             "cd ~/CampUsers/Pei/open_ws",
             "source /opt/ros/noetic/setup.bash",
             "source devel/setup.bash",
@@ -612,29 +730,29 @@ class MainWindow(QtWidgets.QMainWindow):
         ])
         self.p1.set_command(cmd1)
 
-        # Override start method: show [start], capture all stdout/stderr
         def _start_override():
             if not self.p1.current_cmd:
-                self.p1.status.setText("Status: no command set")
-                return
+                self.p1.status.setText("Status: no command set"); return
             if self.p1.proc:
-                self.p1.status.setText("Status: already running")
-                return
+                self.p1.status.setText("Status: already running"); return
+            orig_cmd_str = self.p1.current_cmd[-1] if isinstance(self.p1.current_cmd, (list,tuple)) else str(self.p1.current_cmd)
+            if "roslaunch" in orig_cmd_str and "--screen" not in orig_cmd_str:
+                orig_cmd_str = orig_cmd_str.replace("roslaunch ", "roslaunch --screen ", 1)
+            inner = "export TERM=xterm-256color FORCE_COLOR=1; stdbuf -oL -eL " + orig_cmd_str
+            wrapped = f"script -q -c {shlex.quote(inner)} /dev/null"
             self.p1.out.append("<pre style='color:#aaa'>[start]</pre>")
             self.p1.proc = QtCore.QProcess(self.p1)
-            self.p1.proc.setProcessChannelMode(QtCore.QProcess.SeparateChannels)
+            self.p1.proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
             self.p1.proc.readyReadStandardOutput.connect(lambda:
                 self.p1.append_ansi(self.p1.proc.readAllStandardOutput().data())
             )
-            self.p1.proc.readyReadStandardError.connect(lambda:
-                self.p1.append_ansi(self.p1.proc.readAllStandardError().data())
-            )
             self.p1.proc.finished.connect(self.p1._on_finished)
-            self.p1.proc.start(self.p1.current_cmd[0], self.p1.current_cmd[1:])
+            base = list(self.p1.current_cmd)
+            base[-1] = wrapped
+            self.p1.proc.start(base[0], base[1:])
             self.p1.status.setText("Status: running")
         self.p1.start = _start_override
 
-        # Override restart method: show [restart -> Ctrl-C]
         def _restart_override():
             if self.p1.proc:
                 self.p1.out.append("<pre style='color:#aaa'>[restart -> Ctrl-C]</pre>")
@@ -648,11 +766,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.p1.start()
         self.p1.restart = _restart_override
 
-        # Override stop method: show [stop]
         def _stop_override():
             if not self.p1.proc:
-                self.p1.status.setText("Status: not running")
-                return
+                self.p1.status.setText("Status: not running"); return
             self.p1.out.append("<pre style='color:#aaa'>[stop]</pre>")
             self.p1._send_sigint_group()
             if not self.p1.proc.waitForFinished(2000):
@@ -663,17 +779,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.p1.status.setText("Status: stopped")
         self.p1.stop = _stop_override
 
-        # ---------------------------
-        # Pane 2: Bag → JointState Replayer
-        # ---------------------------
         self.p2 = BagReplayerPane()
 
-        # ---------------------------
-        # Pane 3: Controller (conda + python)
-        # ---------------------------
-        # stdout is forced newline chunks, no command echo
         self.p3 = ProcessPane(
-            "Controller (conda + python script)",
+            "Controller",
             echo_cmd=False, capture_stderr=False, force_chunk_newline=True
         )
         cmd3 = " && ".join([
@@ -687,54 +796,56 @@ class MainWindow(QtWidgets.QMainWindow):
         ])
         self.p3.set_command(cmd3)
 
-        # ---------------------------
-        # Pane 4: JSON Command Viewer
-        # ---------------------------
         self.p4 = JsonPane()
 
-        # Add panes to splitter
         splitter.addWidget(self.p1)
         splitter.addWidget(self.p2)
         splitter.addWidget(self.p3)
         splitter.addWidget(self.p4)
 
-        # Set stretch factors (relative width)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
         splitter.setStretchFactor(2, 2)
         splitter.setStretchFactor(3, 1)
         self.setCentralWidget(splitter)
 
-        # ---------------------------
-        # Menu
-        # ---------------------------
         bar = self.menuBar()
         filem = bar.addMenu("File")
         act_quit = filem.addAction("Quit"); act_quit.triggered.connect(self.close)
 
-    # ---------------------------
-    # Graceful shutdown on close
-    # ---------------------------
     def closeEvent(self, e: QtGui.QCloseEvent):
         for fn in (getattr(self.p1, "stop", None),
                    getattr(self.p3, "stop", None),
-                   getattr(self.p2, "stop_replay", None)):
+                   getattr(self.p2, "stop_replay", None),
+                   getattr(self.p2, "stop_calibration", None),
+                   getattr(self.p2, "stop_calibration_hand", None)):
             try:
                 if callable(fn): fn()
             except Exception:
                 pass
-        super().closeEvent(e)
 
+        import subprocess
+        print("[Shutdown] Attempting to kill all ROS processes to ensure a clean exit...")
+        commands_to_run = [
+            ["killall", "-9", "rosout"],
+            ["killall", "-9", "roslaunch"]
+        ]
+        for cmd in commands_to_run:
+            try:
+                subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print(f"[Shutdown] Executed: {' '.join(cmd)}")
+            except Exception as ex:
+                print(f"[Shutdown] Error executing {' '.join(cmd)}: {ex}")
+
+        super().closeEvent(e)
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
     QtGui.QGuiApplication.setDesktopFileName("robot_ui_suite.desktop")
     app.setApplicationName("Robot UI Suite")
     app.setWindowIcon(QtGui.QIcon("/home/camp/.local/share/icons/robot_ui_suite.jpeg"))
-
     w = MainWindow(); w.show()
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()

@@ -38,16 +38,42 @@
 
     <!-- load realsense cameras -->
     <!-- <include file="$(find franka_policy)/launch/rs_multiple_devices.launch"/> -->
-        <!-- (start your tracking system's ROS driver) -->
-    <include file="$(find realsense2_camera)/launch/rs_camera.launch"> </include>  
+    
+    <!-- (start your tracking system's ROS driver) -->
+     <group ns="eye_on_base">
+        <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+            <arg name="serial_no" value="030522070773"/> 
+            <arg name="tf_prefix" value="eye_on_base"/>
+            <arg name="enable_color"      value="true"/>
+            <arg name="enable_depth"      value="true"/>
+            <arg name="enable_pointcloud" value="true"/>
+
+        </include>
+    </group>
+
+    <group ns="eye_on_hand">
+        <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+            <arg name="serial_no" value="733512070734"/>
+            <arg name="tf_prefix" value="eye_on_hand"/>
+            <arg name="enable_color"      value="true"/>
+            <arg name="enable_depth"      value="true"/>
+            <arg name="enable_pointcloud" value="true"/>
+        </include>
+    </group>   
+
 
     <!-- Hand-eye TF  -->
     <node pkg="easy_handeye"
           type="publish_base_to_camera.py"
           name="publish_base_to_camera"
           output="log"
-          respawn_delay="5.0" />
+          respawn_delay="10.0" />
 
+    <node pkg="easy_handeye"
+          type="publish_hand_to_camera.py"
+          name="publish_hand_to_camera"
+          output="log"
+          respawn_delay="10.0" />
 
 
 </launch>
