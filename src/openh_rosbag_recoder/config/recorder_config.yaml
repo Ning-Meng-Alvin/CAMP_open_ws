@@ -1,0 +1,7 @@
+
+bag_save_path: "/home/camp/Openh_rog_bags"
+
+topics_to_record:
+  - "/joint_states"
+  - "/end_effector_pose'"
+  - "/franka_state_controller/Cali_F_ext"

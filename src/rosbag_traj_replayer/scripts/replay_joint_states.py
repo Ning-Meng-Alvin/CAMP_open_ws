@@ -3,6 +3,7 @@
 
 """
 Replay JointState from a selected rosbag at recorded rate to /joint_state_follower.
+Also publishes replay state to /rosbag_replay_state (True for replaying, False for idle).
 
 UI:
 - A simple curses TUI that lists *.bag under a directory (default: /home/camp/ros_bags).
@@ -28,6 +29,7 @@ import signal
 import rospy
 import rosbag
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Bool
 
 DEFAULT_DIR = "/home/camp/ros_bags"
 
@@ -48,7 +50,6 @@ def find_joint_topics(bag, forced_topics=None):
     """Return a list of JointState topics to replay (first found if forced_topics is None)."""
     if forced_topics:
         return forced_topics
-    # auto-detect first JointState topic
     try:
         info = bag.get_type_and_topic_info()
         for topic, tinfo in info.topics.items():
@@ -79,14 +80,12 @@ def replay_bag(bag_path, pub, source_topics, speed=1.0, reorder=True, stop_flag=
         for _, msg, t in bag.read_messages(topics=topics):
             if stop_flag() or rospy.is_shutdown():
                 break
-            # sleep by recorded delta (scaled by speed)
             if prev_t is not None:
                 dt = (t - prev_t).to_sec() / max(speed, 1e-6)
                 if dt > 0:
                     rospy.sleep(dt)
             prev_t = t
 
-            # sanitize header stamp to "now" (follower usually doesn't need original time)
             msg.header.stamp = rospy.Time.now()
             if reorder:
                 msg = reorder_to_franka(msg)
@@ -95,11 +94,23 @@ def replay_bag(bag_path, pub, source_topics, speed=1.0, reorder=True, stop_flag=
     rospy.loginfo("Replay finished: %s", bag_path)
     return True
 
+# <-- ADDED: Helper function to publish state multiple times -->
+def publish_state_multiple_times(publisher, state_value, count, delay=0.05):
+    """Publishes a boolean state message multiple times with a small delay."""
+    msg = Bool()
+    msg.data = state_value
+    rospy.loginfo(f"Publishing state '{state_value}' {count} times to topic '{publisher.name}'.")
+    for _ in range(count):
+        if rospy.is_shutdown():
+            break
+        publisher.publish(msg)
+        rospy.sleep(delay) # Add a small delay to ensure messages are sent separately
+
 class TUI:
     def __init__(self, stdscr, base_dir, on_enter):
         self.stdscr = stdscr
         self.base_dir = base_dir
-        self.on_enter = on_enter  # callback(path) -> None
+        self.on_enter = on_enter
         self.cursor = 0
         self.files = []
         self.last_refresh = 0
@@ -133,12 +144,10 @@ class TUI:
         while True:
             self._refresh_files()
             self.draw(status=status)
-
             try:
                 key = self.stdscr.getch()
             except Exception:
                 key = -1
-
             if key == ord('q'):
                 break
             elif key in (curses.KEY_UP, ord('k')):
@@ -147,7 +156,7 @@ class TUI:
                 self.cursor = min(max(0, len(self.files)-1), self.cursor + 1)
             elif key == ord('r'):
                 self._refresh_files(force=True)
-            elif key in (10, 13):  # Enter
+            elif key in (10, 13):
                 if not self.files:
                     status = "No bag to replay."
                     continue
@@ -163,11 +172,17 @@ def main():
     rospy.init_node("rosbag_traj_replayer", anonymous=False)
     base_dir = rospy.get_param("~dir", DEFAULT_DIR)
     out_topic = rospy.get_param("~out_topic", "/joint_state_follower")
-    source_topics = rospy.get_param("~source_topics", [])  # e.g. ["/joint_states"]
+    source_topics = rospy.get_param("~source_topics", [])
     speed = float(rospy.get_param("~speed", 1.0))
     do_reorder = bool(rospy.get_param("~reorder_to_franka", True))
 
     pub = rospy.Publisher(out_topic, JointState, queue_size=10)
+    
+    state_pub = rospy.Publisher('rosbag_replay_state', Bool, queue_size=1, latch=True)
+    
+    # Publish initial state (False means idle) just once
+    state_pub.publish(Bool(data=False))
+    
     stop = {"flag": False}
     def _sigint(_a, _b):
         stop["flag"] = True
@@ -176,15 +191,28 @@ def main():
 
     def on_enter(path):
         stop["flag"] = False
-        replay_bag(path, pub, source_topics, speed=speed, reorder=do_reorder,
-                   stop_flag=lambda: stop["flag"])
+        
+        # <-- MODIFIED: Publish state True (replaying) 5 times -->
+        publish_state_multiple_times(state_pub, True, 5)
+        
+        try:
+            replay_bag(path, pub, source_topics, speed=speed, reorder=do_reorder,
+                       stop_flag=lambda: stop["flag"])
+        finally:
+            # <-- MODIFIED: Ensure that after replay, publish state False (idle) 5 times -->
+            if not rospy.is_shutdown():
+                publish_state_multiple_times(state_pub, False, 5)
 
-    # Ensure directory exists
     if not os.path.isdir(base_dir):
         rospy.logwarn("Directory not found: %s", base_dir)
         os.makedirs(base_dir, exist_ok=True)
 
     curses.wrapper(lambda stdscr: TUI(stdscr, base_dir, on_enter).loop())
+    
+    # <-- MODIFIED: Before exiting, publish the idle state 5 times -->
+    if not rospy.is_shutdown():
+        rospy.loginfo("Shutting down. Setting replay state to idle.")
+        publish_state_multiple_times(state_pub, False, 5)
 
 if __name__ == "__main__":
     main()

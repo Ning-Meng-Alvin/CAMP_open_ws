@@ -1,0 +1,13 @@
+<launch>
+
+    <rosparam command="load" 
+              file="$(find openh_rosbag_recoder)/config/recorder_config.yaml" 
+              ns="openh_recorder_node" />
+
+    <node name="openh_recorder_node" 
+          pkg="openh_rosbag_recoder" 
+          type="openh_recorder_node.py" 
+          output="log">
+    </node>
+
+</launch>

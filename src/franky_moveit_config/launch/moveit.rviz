@@ -9,7 +9,6 @@ Panels:
         - /MotionPlanning1/Planned Path1
         - /RobotModel1
         - /TF1
-        - /TF1/Frames1
         - /Image1
       Splitter Ratio: 0.5
     Tree Height: 672
@@ -318,6 +317,16 @@ Visualization Manager:
         All Enabled: false
         eye_on_base_link:
           Value: true
+        eye_on_hand_aligned_depth_to_color_frame:
+          Value: true
+        eye_on_hand_color_frame:
+          Value: true
+        eye_on_hand_color_optical_frame:
+          Value: true
+        eye_on_hand_depth_frame:
+          Value: true
+        eye_on_hand_depth_optical_frame:
+          Value: true
         eye_on_hand_link:
           Value: true
         panda_EE:
@@ -349,7 +358,7 @@ Visualization Manager:
       Name: TF
       Show Arrows: true
       Show Axes: true
-      Show Names: true
+      Show Names: false
       Tree:
         panda_link0:
           eye_on_base_link:
@@ -365,7 +374,14 @@ Visualization Manager:
                       panda_link7:
                         panda_link8:
                           eye_on_hand_link:
-                            {}
+                            eye_on_hand_aligned_depth_to_color_frame:
+                              eye_on_hand_color_optical_frame:
+                                {}
+                            eye_on_hand_color_frame:
+                              {}
+                            eye_on_hand_depth_frame:
+                              eye_on_hand_depth_optical_frame:
+                                {}
                           panda_probe:
                             {}
                           panda_probe_ee:
@@ -463,9 +479,9 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.1199997067451477
+      Pitch: 0.13999970257282257
       Target Frame: panda_link0
-      Yaw: 5.949948787689209
+      Yaw: 0.5817630887031555
     Saved: ~
 Window Geometry:
   Camera:
@@ -488,4 +504,4 @@ Window Geometry:
     collapsed: false
   Width: 2451
   X: 1303
-  Y: 58
+  Y: 27
