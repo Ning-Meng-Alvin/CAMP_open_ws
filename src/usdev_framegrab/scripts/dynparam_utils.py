@@ -40,6 +40,7 @@ class FGDynParamRecfg:
         self.auto_cropping  = False
         self.hflip_image = False
         self.color_image = False
+        self.time_offset = 0.0  # time offset in seconds
         self.cbox = None # cropped box (x0, x1, y0, y1)
         self.cfg_flag = False
         self.trigger_update_list = False
@@ -65,12 +66,14 @@ class FGDynParamRecfg:
                                     Loader=yaml.FullLoader)
             config.hflip_image = capture_config['hflip']
             config.color_image = capture_config['color']
+            config.time_offset = capture_config.get('time_offset', 0.0)
             config.topleft_x0 = capture_config['final_cbox']['x0']
             config.topleft_y0 = capture_config['final_cbox']['y0']
             config.bottomright_x1 = capture_config['final_cbox']['x1']
             config.bottomright_y1 = capture_config['final_cbox']['y1']
             self.hflip_image = config.hflip_image
             self.color_image = config.color_image
+            self.time_offset = config.time_offset
             self.cbox =[config.topleft_x0, config.bottomright_x1,
                         config.topleft_y0, config.bottomright_y1]
             
@@ -135,6 +138,10 @@ class FGDynParamRecfg:
         
         if level == 8:
             self.color_image = config.color_image
+        
+        if level == 10:
+            self.time_offset = config.time_offset
+            self.dynrcfg_prompt = f'time offset set to {self.time_offset:.3f}s'
         
         if level == 9:
             if config.save_settings is True:

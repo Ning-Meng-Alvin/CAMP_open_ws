@@ -22,6 +22,10 @@ sudo usbcaptureutility
 run the launch file to make some configurations
 ``` bash
 roslaunch usdev_framegrab stream_usimg.launch  
+
+or
+
+roslaunch usdev_framegrab stream_usimg_dyncfg.launch
 ```
 
 # 3. adjust the streaming settings

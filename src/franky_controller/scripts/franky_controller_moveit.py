@@ -18,8 +18,6 @@ Key safety:
   CartesianVelocityMotion and join(), to avoid "motion type change" errors.
 - Publisher thread only READS robot state; control thread is the ONLY one
   sending robot.move()/join_motion().
-
-Author: you :)
 """
 
 import numpy as np

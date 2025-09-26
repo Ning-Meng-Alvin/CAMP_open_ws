@@ -126,6 +126,7 @@ class FrameGrabber:
                     self.fgdyn_cfg.trigger_save_settings = False
                     self.capture_config['hflip'] = self.fgdyn_cfg.hflip_image
                     self.capture_config['color'] = self.fgdyn_cfg.color_image
+                    self.capture_config['time_offset'] = self.fgdyn_cfg.time_offset
                     self.capture_config['final_cbox']['x0'] = self.cbox[0]
                     self.capture_config['final_cbox']['x1'] = self.cbox[1]
                     self.capture_config['final_cbox']['y0'] = self.cbox[2]
@@ -190,7 +191,11 @@ class FrameGrabber:
                 msg_img.header.frame_id = self.frame_id
                 msg_img.header.seq = img_seq
                 img_seq += 1
-                msg_img.header.stamp = rospy.get_rostime()
+
+                # Apply time offset compensation for system latency
+                # Use dynamic reconfigure parameter for time offset
+                time_offset = rospy.Duration(self.fgdyn_cfg.time_offset)
+                msg_img.header.stamp = rospy.get_rostime() - time_offset
                 self.pub_img.publish(msg_img)
             
         if self.cap is not None:
@@ -296,9 +301,22 @@ class FrameGrabber:
         return True, [x0, x1, y0, y1]
     
     def init_video_cap(self, video_index):
-        video_cap = cv2.VideoCapture(video_index)
-        video_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 5000) # mind the resolution
-        video_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 5000)
+        # Use V4L2 backend to avoid GStreamer issues
+        video_cap = cv2.VideoCapture(video_index, cv2.CAP_V4L2)
+        if not video_cap.isOpened():
+            # If V4L2 fails, try default backend
+            video_cap = cv2.VideoCapture(video_index)
+        
+        if video_cap.isOpened():
+            # Set resolution
+            video_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+            video_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1200)
+            # Set buffer size
+            video_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            print(f"Video capture initialized successfully for device {video_index}")
+        else:
+            print(f"Failed to initialize video capture for device {video_index}")
+        
         return video_cap
     
     def get_video_idx(self, max_num=10):

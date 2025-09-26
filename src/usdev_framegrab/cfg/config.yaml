@@ -12,4 +12,5 @@ init_cbox:
   y0: 180
   y1: 900
 pub_topic: frame_grabber/us_img
-video_index: 4
+time_offset: 0.0
+video_index: 0
