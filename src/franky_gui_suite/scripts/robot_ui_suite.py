@@ -322,9 +322,23 @@ class BagReplayerPane(QtWidgets.QWidget):
     """Mouse-friendly JointState bag replayer with stable multi-selection & delete."""
     def __init__(self, parent=None):
         super().__init__(parent)
+        
+        try:
+            import rospy
+            from std_msgs.msg import Bool
+            if not rospy.core.is_initialized():
+                rospy.init_node("bag_replayer_pane", anonymous=True, disable_signals=True)
+
+            self.state_pub = rospy.Publisher('rosbag_replay_state', Bool, queue_size=1, latch=True)
+            self.state_pub.publish(Bool(data=False))
+        except Exception as e:
+            print(f"Failed to initialize ROS for state publisher: {e}")
+            self.state_pub = None
+            
         self.worker = None
         self.cali_proc = None
         self.cali_hand_proc = None
+        self.rqt_proc = None # MODIFICATION: Add instance variable for RQT process
         self.ansi = AnsiToHtml()
         self._refresh_paused = False
 
@@ -384,23 +398,23 @@ class BagReplayerPane(QtWidgets.QWidget):
         inner.addWidget(self.list_widget); inner.addWidget(right)
         inner.setStretchFactor(0, 1); inner.setStretchFactor(1, 2); inner.setSizes([480, 900])
         
-        # --- MODIFICATION START: Adjust stretch factors ---
-        # Give the top controls (inner) more weight (2) than the bottom log (out, 1)
-        # This makes the log area smaller.
         layout.addWidget(inner, 2) 
 
+        # --- MODIFICATION START: Add RQT button to the layout ---
         cali_layout = QtWidgets.QHBoxLayout()
         self.btn_cali = QtWidgets.QPushButton("eye-on-base cali")
         self.btn_cali_hand = QtWidgets.QPushButton("eye-on-hand cali")
+        self.btn_rqt = QtWidgets.QPushButton("rqt_reconfigure") # Create the button
         cali_layout.addWidget(self.btn_cali)
         cali_layout.addWidget(self.btn_cali_hand)
+        cali_layout.addWidget(self.btn_rqt) # Add it to the layout
         cali_layout.addStretch(1)
         layout.addLayout(cali_layout)
+        # --- MODIFICATION END ---
 
         self.out = QtWidgets.QTextEdit(); self.out.setReadOnly(True)
         self.out.setStyleSheet("QTextEdit { background:#000; color:#fff; }")
-        layout.addWidget(self.out, 1) # This log area gets less stretch weight
-        # --- MODIFICATION END ---
+        layout.addWidget(self.out, 1)
 
         self.bottom_status_bar = QtWidgets.QLabel("Status: idle")
         layout.addWidget(self.bottom_status_bar)
@@ -412,6 +426,7 @@ class BagReplayerPane(QtWidgets.QWidget):
         self.btn_delete.clicked.connect(self.delete_selected)
         self.btn_cali.clicked.connect(self.toggle_calibration)
         self.btn_cali_hand.clicked.connect(self.toggle_calibration_hand)
+        self.btn_rqt.clicked.connect(self.toggle_rqt_reconfigure) # MODIFICATION: Connect signal
 
         del_action = QtWidgets.QAction(self); del_action.setShortcut(Qt.Key_Delete)
         del_action.triggered.connect(self.delete_selected); self.addAction(del_action)
@@ -480,6 +495,11 @@ class BagReplayerPane(QtWidgets.QWidget):
         self.worker.progress.connect(lambda s: (self._append(s), self._set_status("running")))
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
+        
+        if self.state_pub:
+            from std_msgs.msg import Bool
+            self.state_pub.publish(Bool(data=True))
+            
         self.worker.start(); self._set_status("running")
 
     def stop_replay(self):
@@ -521,6 +541,10 @@ class BagReplayerPane(QtWidgets.QWidget):
         self._append(f"[error] {s}", True); self._cleanup("idle")
 
     def _cleanup(self, status: str):
+        if self.state_pub:
+            from std_msgs.msg import Bool
+            self.state_pub.publish(Bool(data=False))
+
         if self.worker: self.worker.wait(200)
         self.worker=None; self._set_status(status)
 
@@ -628,6 +652,56 @@ class BagReplayerPane(QtWidgets.QWidget):
         self.cali_hand_proc = None
         self.btn_cali_hand.setText("eye-on-hand cali")
         self._append("[cali-hand] Sequence finished or stopped.", True)
+
+    # --- MODIFICATION START: Add methods to control RQT process ---
+    def toggle_rqt_reconfigure(self):
+        """Toggles the RQT Reconfigure process on or off."""
+        if self.rqt_proc and self.rqt_proc.state() != QtCore.QProcess.NotRunning:
+            self.stop_rqt_reconfigure()
+        else:
+            self.start_rqt_reconfigure()
+
+    def start_rqt_reconfigure(self):
+        """Starts the RQT Reconfigure process."""
+        if self.rqt_proc and self.rqt_proc.state() != QtCore.QProcess.NotRunning:
+            self._append("[rqt] Already running.", True); return
+        self._append("[rqt] Starting...", True)
+        self.btn_rqt.setText("Stop RQT")
+        cmd_str = (
+            "cd ~/CampUsers/Pei/open_ws && "
+            "source /opt/ros/noetic/setup.bash && "
+            "source devel/setup.bash && "
+            "rosrun rqt_reconfigure rqt_reconfigure"
+        )
+        self.rqt_proc = QtCore.QProcess(self)
+        clean_env = self._get_clean_environment()
+        self.rqt_proc.setProcessEnvironment(clean_env)
+        # We don't need to capture RQT's output, so we can leave channels separate.
+        self.rqt_proc.setProcessChannelMode(QtCore.QProcess.SeparateChannels)
+        self.rqt_proc.finished.connect(self._on_rqt_finished)
+        self.rqt_proc.start("bash", ["-lc", cmd_str])
+
+    def stop_rqt_reconfigure(self):
+        """Stops the RQT Reconfigure process."""
+        self._append("[rqt] Stopping process...", True)
+        if self.rqt_proc and self.rqt_proc.state() != QtCore.QProcess.NotRunning:
+            # For GUI apps, terminate() is often cleaner, but SIGINT is a safe bet.
+            self.rqt_proc.terminate()
+            # If it doesn't close gracefully, we can kill it after a delay
+            if not self.rqt_proc.waitForFinished(1000):
+                self.rqt_proc.kill()
+        # The finished signal will call the cleanup function.
+
+    def _on_rqt_finished(self, code, status):
+        """Called when the RQT process finishes for any reason."""
+        self._append(f"[rqt] Process finished (code={code})", True)
+        self._cleanup_rqt()
+
+    def _cleanup_rqt(self):
+        """Resets the state after the RQT process has stopped."""
+        self.rqt_proc = None
+        self.btn_rqt.setText("rqt_reconfigure")
+    # --- MODIFICATION END ---
 
 # =========================================================
 # JSON Command Viewer
@@ -814,11 +888,14 @@ class MainWindow(QtWidgets.QMainWindow):
         act_quit = filem.addAction("Quit"); act_quit.triggered.connect(self.close)
 
     def closeEvent(self, e: QtGui.QCloseEvent):
+        # --- MODIFICATION START: Add RQT stop function to the list ---
         for fn in (getattr(self.p1, "stop", None),
                    getattr(self.p3, "stop", None),
                    getattr(self.p2, "stop_replay", None),
                    getattr(self.p2, "stop_calibration", None),
-                   getattr(self.p2, "stop_calibration_hand", None)):
+                   getattr(self.p2, "stop_calibration_hand", None),
+                   getattr(self.p2, "stop_rqt_reconfigure", None)): # Add the new stop function
+        # --- MODIFICATION END ---
             try:
                 if callable(fn): fn()
             except Exception:

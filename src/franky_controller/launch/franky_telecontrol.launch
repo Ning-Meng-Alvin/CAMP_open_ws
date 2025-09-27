@@ -76,7 +76,10 @@
           respawn_delay="10.0" />
 
     <!--    US   pic  -->
-    <include file="$(find usdev_framegrab)/launch/stream_usimg_dyncfg.launch"/>
+    <include file="$(find usdev_framegrab)/launch/stream_usimg.launch"/>
+
+
+    <include file="$(find openh_rosbag_recoder)/launch/recorder.launch"/>
 
 </launch>
 
