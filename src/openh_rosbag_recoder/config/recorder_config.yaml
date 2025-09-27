@@ -4,3 +4,4 @@ topics_to_record:
   - "/joint_states"
   - "/end_effector_pose" 
   - "/franka_state_controller/Cali_F_ext"
+  - "/frame_grabber/us_img"

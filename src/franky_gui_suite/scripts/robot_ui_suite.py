@@ -8,6 +8,7 @@ Panes (left -> right):
 2) Bag → JointState Replayer (GUI version of your TUI)
 3) Controller (conda + python)
 4) JSON Command Viewer
+5) Open-H Recorder (NEW)
 
 Notes:
 - Uses `setsid` if available for proper Ctrl-C to the whole group.
@@ -239,9 +240,12 @@ FRANKA_JOINT_ORDER = [
 def _list_bags(dirpath: str):
     p = pathlib.Path(dirpath).expanduser()
     if not p.exists() or not p.is_dir(): return []
-    files = [x for x in p.glob("*.bag*") if x.is_file()]
-    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-    return [f.name for f in files]
+    try:
+        files = [x for x in p.glob("*.bag*") if x.is_file()]
+        files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+        return [f.name for f in files]
+    except OSError:
+        return [] # Handle cases like permission denied
 
 def _find_joint_topics(bag, forced_topics=None):
     if forced_topics: return forced_topics
@@ -338,7 +342,7 @@ class BagReplayerPane(QtWidgets.QWidget):
         self.worker = None
         self.cali_proc = None
         self.cali_hand_proc = None
-        self.rqt_proc = None # MODIFICATION: Add instance variable for RQT process
+        self.rqt_proc = None
         self.ansi = AnsiToHtml()
         self._refresh_paused = False
 
@@ -400,17 +404,15 @@ class BagReplayerPane(QtWidgets.QWidget):
         
         layout.addWidget(inner, 2) 
 
-        # --- MODIFICATION START: Add RQT button to the layout ---
         cali_layout = QtWidgets.QHBoxLayout()
         self.btn_cali = QtWidgets.QPushButton("eye-on-base cali")
         self.btn_cali_hand = QtWidgets.QPushButton("eye-on-hand cali")
-        self.btn_rqt = QtWidgets.QPushButton("rqt_reconfigure") # Create the button
+        self.btn_rqt = QtWidgets.QPushButton("rqt_reconfigure")
         cali_layout.addWidget(self.btn_cali)
         cali_layout.addWidget(self.btn_cali_hand)
-        cali_layout.addWidget(self.btn_rqt) # Add it to the layout
+        cali_layout.addWidget(self.btn_rqt)
         cali_layout.addStretch(1)
         layout.addLayout(cali_layout)
-        # --- MODIFICATION END ---
 
         self.out = QtWidgets.QTextEdit(); self.out.setReadOnly(True)
         self.out.setStyleSheet("QTextEdit { background:#000; color:#fff; }")
@@ -426,7 +428,7 @@ class BagReplayerPane(QtWidgets.QWidget):
         self.btn_delete.clicked.connect(self.delete_selected)
         self.btn_cali.clicked.connect(self.toggle_calibration)
         self.btn_cali_hand.clicked.connect(self.toggle_calibration_hand)
-        self.btn_rqt.clicked.connect(self.toggle_rqt_reconfigure) # MODIFICATION: Connect signal
+        self.btn_rqt.clicked.connect(self.toggle_rqt_reconfigure)
 
         del_action = QtWidgets.QAction(self); del_action.setShortcut(Qt.Key_Delete)
         del_action.triggered.connect(self.delete_selected); self.addAction(del_action)
@@ -653,7 +655,6 @@ class BagReplayerPane(QtWidgets.QWidget):
         self.btn_cali_hand.setText("eye-on-hand cali")
         self._append("[cali-hand] Sequence finished or stopped.", True)
 
-    # --- MODIFICATION START: Add methods to control RQT process ---
     def toggle_rqt_reconfigure(self):
         """Toggles the RQT Reconfigure process on or off."""
         if self.rqt_proc and self.rqt_proc.state() != QtCore.QProcess.NotRunning:
@@ -676,7 +677,6 @@ class BagReplayerPane(QtWidgets.QWidget):
         self.rqt_proc = QtCore.QProcess(self)
         clean_env = self._get_clean_environment()
         self.rqt_proc.setProcessEnvironment(clean_env)
-        # We don't need to capture RQT's output, so we can leave channels separate.
         self.rqt_proc.setProcessChannelMode(QtCore.QProcess.SeparateChannels)
         self.rqt_proc.finished.connect(self._on_rqt_finished)
         self.rqt_proc.start("bash", ["-lc", cmd_str])
@@ -685,12 +685,9 @@ class BagReplayerPane(QtWidgets.QWidget):
         """Stops the RQT Reconfigure process."""
         self._append("[rqt] Stopping process...", True)
         if self.rqt_proc and self.rqt_proc.state() != QtCore.QProcess.NotRunning:
-            # For GUI apps, terminate() is often cleaner, but SIGINT is a safe bet.
             self.rqt_proc.terminate()
-            # If it doesn't close gracefully, we can kill it after a delay
             if not self.rqt_proc.waitForFinished(1000):
                 self.rqt_proc.kill()
-        # The finished signal will call the cleanup function.
 
     def _on_rqt_finished(self, code, status):
         """Called when the RQT process finishes for any reason."""
@@ -701,7 +698,6 @@ class BagReplayerPane(QtWidgets.QWidget):
         """Resets the state after the RQT process has stopped."""
         self.rqt_proc = None
         self.btn_rqt.setText("rqt_reconfigure")
-    # --- MODIFICATION END ---
 
 # =========================================================
 # JSON Command Viewer
@@ -774,6 +770,185 @@ class JsonPane(QtWidgets.QWidget):
     def next(self):
         if self.commands:
             self.idx = (self.idx + 1) % len(self.commands); self._render()
+            
+# =========================================================
+# --- PANE: Open-H Recorder (Simplified) ---
+# =========================================================
+class RecorderPane(QtWidgets.QWidget):
+    """A pane for browsing and managing rosbag files."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._refresh_paused = False
+        
+        # --- UI Layout ---
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Title
+        hdr = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("<b>Open-H Recorder</b>")
+        title.setTextFormat(Qt.RichText)
+        hdr.addWidget(title)
+        hdr.addStretch(1)
+        layout.addLayout(hdr)
+
+        # Folder path input
+        row = QtWidgets.QHBoxLayout()
+        self.dir_edit = QtWidgets.QLineEdit(str(pathlib.Path("~/Openh_ros_bags").expanduser()))
+        btn_browse = QtWidgets.QPushButton("Browse")
+        row.addWidget(QtWidgets.QLabel("Folder:"))
+        row.addWidget(self.dir_edit, 1)
+        row.addWidget(btn_browse)
+        layout.addLayout(row)
+
+        # Middle section (file list and info display)
+        splitter = QtWidgets.QSplitter(Qt.Vertical)
+        
+        # File list
+        self.list_widget = QtWidgets.QListWidget()
+        self.list_widget.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.list_widget.setAlternatingRowColors(True)
+        self.list_widget.setStyleSheet(
+            "QListWidget::item:selected { background:#3d6dcc; color:#ffffff; }"
+            "QListWidget::item:selected:!active { background:#3d6dcc; color:#ffffff; }"
+        )
+        self.list_widget.installEventFilter(self) # For stable selection
+        splitter.addWidget(self.list_widget)
+
+        # Info/log display area
+        self.info_display = QtWidgets.QTextEdit()
+        self.info_display.setReadOnly(True)
+        self.info_display.setStyleSheet("QTextEdit { background:#000; color:#fff; font-family:monospace; }")
+        splitter.addWidget(self.info_display)
+        
+        splitter.setStretchFactor(0, 3) # List gets more space
+        splitter.setStretchFactor(1, 1) # Info box gets less space
+        layout.addWidget(splitter, 1)
+
+        # Bottom control bar
+        bottom_controls = QtWidgets.QHBoxLayout()
+        self.btn_delete = QtWidgets.QPushButton("Delete")
+        self.btn_refresh = QtWidgets.QPushButton("Refresh")
+        self.count_lbl = QtWidgets.QLabel("0 bags")
+
+        # Removed the checkbox widget
+        bottom_controls.addStretch(1)
+        bottom_controls.addWidget(self.btn_refresh)
+        bottom_controls.addWidget(self.btn_delete)
+        bottom_controls.addWidget(self.count_lbl)
+        layout.addLayout(bottom_controls)
+        
+        # --- Signal and Slot Connections ---
+        btn_browse.clicked.connect(self._choose_dir)
+        self.btn_refresh.clicked.connect(self.refresh_list)
+        self.btn_delete.clicked.connect(self.delete_selected)
+        self.list_widget.itemSelectionChanged.connect(self.on_selection_changed)
+
+        # Timer for auto-refreshing the file list
+        self.auto_refresh_timer = QtCore.QTimer(self);
+        self.auto_refresh_timer.timeout.connect(self.refresh_list)
+        self.auto_refresh_timer.start(2000)
+        self.refresh_list()
+
+    def on_selection_changed(self):
+        """When the selection in the list changes, display details of the bag file."""
+        selected_items = self.list_widget.selectedItems()
+        if len(selected_items) != 1:
+            self.info_display.clear()
+            return
+        
+        bag_name = selected_items[0].text()
+        folder = self.dir_edit.text().strip()
+        full_path = str(pathlib.Path(folder).expanduser() / bag_name)
+
+        try:
+            # We import rosbag here so the UI doesn't crash if ROS isn't sourced
+            import rosbag
+            with rosbag.Bag(full_path, 'r') as bag:
+                topics = list(bag.get_type_and_topic_info().topics.keys())
+                topics.sort()
+                
+                # Format the output
+                info_text = f"Topics in {bag_name}:\n"
+                info_text += "\n".join([f"  - {topic}" for topic in topics])
+                self.info_display.setText(info_text)
+
+        except Exception as e:
+            self.info_display.setText(f"Error reading bag file: {bag_name}\n\n{e}")
+
+    def eventFilter(self, obj, ev):
+        """Event filter to implement stable list selection behavior."""
+        if obj is self.list_widget:
+            t = ev.type()
+            if t in (QtCore.QEvent.Enter, QtCore.QEvent.FocusIn, QtCore.QEvent.MouseButtonPress):
+                self._refresh_paused = True
+            elif t in (QtCore.QEvent.Leave, QtCore.QEvent.FocusOut):
+                self._refresh_paused = False
+        return super().eventFilter(obj, ev)
+
+    def _choose_dir(self):
+        d = QtWidgets.QFileDialog.getExistingDirectory(self, "Select bag folder", self.dir_edit.text())
+        if d:
+            self.dir_edit.setText(d)
+            self.refresh_list()
+
+    def refresh_list(self):
+        if self._refresh_paused:
+            return
+        folder = self.dir_edit.text().strip()
+        items = _list_bags(folder)
+        
+        # Preserve selection state across refreshes
+        prev_selected = {it.text() for it in self.list_widget.selectedItems()}
+        
+        # Temporarily disable signals during refresh to prevent on_selection_changed from firing.
+        self.list_widget.blockSignals(True)
+        self.list_widget.clear()
+        for name in items:
+            it = QtWidgets.QListWidgetItem(name)
+            it.setToolTip(name)
+            self.list_widget.addItem(it)
+            if name in prev_selected:
+                it.setSelected(True)
+        self.list_widget.blockSignals(False)
+        
+        self.count_lbl.setText(f"{len(items)} bags")
+        # Manually trigger an update in case the selection info is not displayed after refresh.
+        self.on_selection_changed()
+
+    def delete_selected(self):
+        sel = self.list_widget.selectedItems()
+        if not sel:
+            self.info_display.setText("[delete] No bags selected.")
+            return
+
+        folder = self.dir_edit.text().strip()
+        names = [it.text() for it in sel]
+        msg = "Permanently delete these files?\n\n" + "\n".join(names)
+        
+        self._refresh_paused = True
+        res = QtWidgets.QMessageBox.question(self, "Confirm Delete", msg,
+                                             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                                             QtWidgets.QMessageBox.No)
+        self._refresh_paused = False
+
+        if res != QtWidgets.QMessageBox.Yes:
+            return
+
+        removed_count, failed_items = 0, []
+        for name in names:
+            path = str(pathlib.Path(folder).expanduser() / name)
+            try:
+                os.remove(path)
+                removed_count += 1
+            except Exception as e:
+                failed_items.append(f"{name}: {e}")
+        
+        log_text = f"[delete] Removed {removed_count} file(s)."
+        if failed_items:
+            log_text += "\n[error] Failed to remove:\n" + "\n".join(failed_items)
+        self.info_display.setText(log_text)
+        
+        self.refresh_list()
 
 # =========================================================
 # Main Window
@@ -782,7 +957,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Robot Multi-Panel UI")
-        self.resize(1680, 960)
+        self.resize(1800, 1000) # Slightly increase window size to accommodate the new pane
 
         splitter = QtWidgets.QSplitter(Qt.Horizontal)
 
@@ -871,16 +1046,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.p3.set_command(cmd3)
 
         self.p4 = JsonPane()
+        
+        # --- Instantiate and add the Recorder pane ---
+        self.p5 = RecorderPane()
 
         splitter.addWidget(self.p1)
         splitter.addWidget(self.p2)
         splitter.addWidget(self.p3)
         splitter.addWidget(self.p4)
+        splitter.addWidget(self.p5) 
 
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 3)
-        splitter.setStretchFactor(2, 2)
-        splitter.setStretchFactor(3, 1)
+        # Re-assign window proportions
+        splitter.setStretchFactor(0, 20)
+        splitter.setStretchFactor(1, 20)
+        splitter.setStretchFactor(2, 20)
+        splitter.setStretchFactor(3, 10)
+        splitter.setStretchFactor(4, 15) 
         self.setCentralWidget(splitter)
 
         bar = self.menuBar()
@@ -888,14 +1069,14 @@ class MainWindow(QtWidgets.QMainWindow):
         act_quit = filem.addAction("Quit"); act_quit.triggered.connect(self.close)
 
     def closeEvent(self, e: QtGui.QCloseEvent):
-        # --- MODIFICATION START: Add RQT stop function to the list ---
+        # The new RecorderPane has no background processes to kill,
+        # so we don't need to add anything here.
         for fn in (getattr(self.p1, "stop", None),
                    getattr(self.p3, "stop", None),
                    getattr(self.p2, "stop_replay", None),
                    getattr(self.p2, "stop_calibration", None),
                    getattr(self.p2, "stop_calibration_hand", None),
-                   getattr(self.p2, "stop_rqt_reconfigure", None)): # Add the new stop function
-        # --- MODIFICATION END ---
+                   getattr(self.p2, "stop_rqt_reconfigure", None)):
             try:
                 if callable(fn): fn()
             except Exception:
@@ -920,7 +1101,10 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     QtGui.QGuiApplication.setDesktopFileName("robot_ui_suite.desktop")
     app.setApplicationName("Robot UI Suite")
-    app.setWindowIcon(QtGui.QIcon("/home/camp/.local/share/icons/robot_ui_suite.jpeg"))
+    # You might need to adjust the icon path if it's not universally available
+    icon_path = "/home/camp/.local/share/icons/robot_ui_suite.jpeg"
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QtGui.QIcon(icon_path))
     w = MainWindow(); w.show()
     sys.exit(app.exec_())
 
